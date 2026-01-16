@@ -4,7 +4,7 @@
 import type { NextFunction, Request, Response } from "express";
 import type { RequestHandler } from "express-serve-static-core";
 
-export const asynchHandler = (fn:RequestHandler) => {
+export const asynchHandler = (fn: RequestHandler) => {
   return (req: Request, res: Response, next: NextFunction) => {
     return Promise.resolve(fn(req, res, next)).catch(next);
   };
