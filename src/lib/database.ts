@@ -31,3 +31,14 @@ export async function connectDB(): Promise<void> {
     process.exit(1);
   }
 }
+
+export async function disconnectDB(): Promise<void> {
+  try {
+    if (AppDataSource.isInitialized) {
+      await AppDataSource.destroy();
+      logger.info("Postgres disconnected");
+    }
+  } catch (error) {
+    logger.error("Database disconnect failed", { error });
+  }
+}

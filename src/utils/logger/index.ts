@@ -4,8 +4,16 @@ import { createLogger, format, transports } from "winston";
 fs.mkdirSync("logs", { recursive: true });
 
 const { combine, timestamp, printf, colorize, uncolorize, errors } = format;
-const logFormat = printf(({ level, message, timestamp, stack }) => {
-  return `${timestamp} ${level}: ${stack || message}`;
+const logFormat = printf((info) => {
+  const { level, message, timestamp, stack, ...meta } = info as Record<
+    string,
+    unknown
+  >;
+
+  const metaStr =
+    meta && Object.keys(meta).length > 0 ? ` ${JSON.stringify(meta)}` : "";
+
+  return `${timestamp} ${level}: ${stack ?? message}${metaStr}`;
 });
 
 const baseFormat = combine(
