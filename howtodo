@@ -1,0 +1,211 @@
+# How to use the project helpers (validation, errors, async handler, logger)
+
+This file is a quick guide for writing new routes/controllers/services using the existing shared utilities.
+
+---
+
+## 1) Standard request flow (how code should be structured)
+
+**Route → (upload middleware) → validate() → asyncHandler(controller) → service → repo/db**
+
+- **validate()**: validates *incoming* request data (boundary)
+- **controller**: reads validated input, calls services, returns response
+- **service**: business logic (no Express req/res here)
+- **AppError**: throw or `next()` operational errors
+- **errorHandler**: centralized formatting + status codes
+- **logger**: log unexpected errors or important events
+
+---
+
+## 2) Centralized validation (Zod) — where to use it
+
+Use Zod validation only at app boundaries:
+- `req.body`, `req.query`, `req.params`, `req.headers`
+- optionally `req.file` / `req.files` for multipart uploads
+
+Do **not** sprinkle Zod checks inside services unless that service is also a boundary (e.g., webhook handler, external API response parsing).
+
+### 2.1 Define schemas
+Create schemas in: `src/validations/schemas/`
+
+Example (headers + body):
+
+```ts
+import { z } from "zod";
+
+export const createUserSchema = {
+  headers: z.object({ "x-test": z.string().min(1) }).passthrough(),
+  body: z.object({
+    name: z.string().min(2),
+    age: z.coerce.number().int().min(1).optional(),
+  }),
+};
+```
+
+Notes:
+- Express lowercases header keys (`Authorization` → `authorization`)
+- For `form-data`, values are strings → use `z.coerce.number()`, `z.coerce.boolean()`
+
+### 2.2 Use `validate()` in routes
+Attach validation **before** controller:
+
+```ts
+import { validate } from "@/validations";
+import { createUserSchema } from "@/validations/schemas/user.schema";
+import { asyncHandler } from "@/utils/asyncHandler";
+
+router.post(
+  "/users",
+  validate(createUserSchema),
+  asyncHandler(userController.create)
+);
+```
+
+### 2.3 Read validated values in controller
+**Contract (enforced): controllers must read request input ONLY from `req.validated.*`.**
+
+`initValidated()` initializes `req.validated` for every request, and `validate(schema)` overwrites the validated parts with parsed values.
+
+Typical reads in controllers:
+- `req.validated.body`
+- `req.validated.query`
+- `req.validated.params`
+- `req.validated.headers`
+
+Avoid:
+- `req.body`, `req.query`, `req.params`, `req.headers` in controllers
+
+---
+
+## 3) Errors (AppError + centralized errorHandler)
+
+### 3.1 When to throw `AppError`
+Use `AppError` for known/operational errors:
+- invalid credentials
+- resource not found
+- forbidden access
+- business rule violations
+
+Examples:
+- `throw new AppError("User not found", 404);`
+- `throw new AppError("Forbidden", 403);`
+
+Validation errors are created by the validator as:
+- `new AppError("Validation failed: body|headers|query|params", 400, true, details)`
+
+### 3.2 Central error handler placement (must be last)
+In `server.ts` / app bootstrap:
+- register routes
+- register 404 handler
+- register `errorHandler` last: `app.use(errorHandler)`
+
+Important: `errorHandler` must have **4 args**:
+`(err, req, res, next)` so Express recognizes it.
+
+---
+
+## 4) asyncHandler (avoid try/catch in controllers)
+Controllers should be async and wrapped by `asyncHandler` so thrown errors reach `errorHandler`.
+
+Pattern:
+```ts
+export const create = async (req: Request, res: Response) => {
+  const body = req.validated.body; // validated input (source of truth)
+  const result = await userService.create(body);
+  res.status(201).json({ status: "success", data: result });
+};
+```
+
+Route:
+```ts
+router.post("/users", validate(schema), asyncHandler(userController.create));
+```
+
+---
+
+## 5) Logger usage
+- Don’t `console.log` in production code.
+- Use `logger.info()` for important state changes (optional).
+- Use `logger.error()` for unexpected errors (already done in `errorHandler` for non-AppError).
+
+---
+
+## 6) Quick checklist for new endpoints
+1. Create Zod schema in `src/validations/schemas/` (or module-local schemas; see below)
+2. Add route:
+   - upload middleware (if any)
+   - `validate(schema)`
+   - `asyncHandler(controllerFn)`
+3. In controller:
+   - read ONLY `req.validated.*`
+   - call service
+   - return response
+4. Throw `AppError` for operational failures
+5. Let `errorHandler` format all errors centrally
+
+---
+
+## 8) Module folder + schema naming conventions (auth/user/order)
+
+Keep feature code in `src/modules/<module>/` and keep schemas next to that module.
+
+Recommended structure:
+
+```
+src/
+  modules/
+    auth/
+      auth.routes.ts
+      auth.controller.ts
+      auth.service.ts
+      schemas/
+        auth.login.schema.ts
+        auth.register.schema.ts
+        auth.refresh.schema.ts
+    user/
+      user.routes.ts
+      user.controller.ts
+      user.service.ts
+      schemas/
+        user.create.schema.ts
+        user.update.schema.ts
+        user.list.schema.ts
+    order/
+      order.routes.ts
+      order.controller.ts
+      order.service.ts
+      schemas/
+        order.create.schema.ts
+        order.update.schema.ts
+        order.list.schema.ts
+```
+
+Schema naming:
+- File name: `<module>.<action>.schema.ts`
+- Export schema objects used by `validate({ body, query, params, headers })`
+- Export inferred types for controller/service boundaries
+
+Example schema export:
+
+```ts
+import { z } from "zod";
+
+export const authLoginSchema = {
+  body: z.object({
+    email: z.string().email(),
+    password: z.string().min(8),
+  }),
+};
+
+export type AuthLoginBody = z.infer<typeof authLoginSchema.body>;
+```
+
+---
+
+## 7) Local testing snippet (curl.exe on Windows)
+```powershell
+curl.exe -X POST "http://localhost:3000/__debug/validate" `
+  -H "Content-Type: application/json" `
+  -H "x-test: hello" `
+  -d "{\"name\":\"alex\",\"age\":21}"
+```

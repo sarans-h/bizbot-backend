@@ -1,0 +1,11 @@
+# Step 1: Build all containers
+docker-compose build
+
+# Step 2: Start everything in background
+docker-compose up -d
+
+# Step 3: Check logs
+docker-compose logs -f
+
+# Step 4: Stop containers
+docker-compose down
